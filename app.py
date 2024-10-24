@@ -8,12 +8,6 @@ from typing import Dict, List, Tuple
 from datetime import datetime
 import os
 
-# Configure Gemini API using Streamlit secrets
-try:
-    genai.configure(api_key=st.secrets["GOOGLE_API_KEY"])
-except Exception as e:
-    st.error("Error configuring API key. Please check your secrets configuration.")
-    st.stop()
 
 
 class DocumentProcessor:
