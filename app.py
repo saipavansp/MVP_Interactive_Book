@@ -6,8 +6,17 @@ import PyPDF2
 import google.generativeai as genai
 from typing import Dict, List, Tuple
 from datetime import datetime
-import os
 
+# Configure Gemini API using Streamlit secrets
+if 'GOOGLE_API_KEY' not in st.secrets:
+    st.error('Google API key not found. Please add your API key to the Streamlit secrets.')
+    st.stop()
+
+try:
+    genai.configure(api_key=st.secrets["GOOGLE_API_KEY"])
+except Exception as e:
+    st.error(f"Error configuring Google API: {str(e)}")
+    st.stop()
 
 
 class DocumentProcessor:
@@ -20,13 +29,17 @@ class DocumentProcessor:
                 text += page.extract_text() + "\n"
             return text.strip()
         except Exception as e:
-            raise Exception(f"Error processing PDF: {str(e)}")
+            st.error(f"Error processing PDF: {str(e)}")
+            return None
 
 
 class APIHandler:
     def __init__(self):
-        # Initialize Gemini Pro model
-        self.model = genai.GenerativeModel('gemini-pro')
+        try:
+            self.model = genai.GenerativeModel('gemini-pro')
+        except Exception as e:
+            st.error(f"Error initializing Gemini model: {str(e)}")
+            raise e
 
     def get_enhanced_response(self,
                               query: str,
@@ -51,11 +64,11 @@ class APIHandler:
             """
 
             response = self.model.generate_content(prompt)
-
             return response.text
 
         except Exception as e:
-            return f"API Error: {str(e)}\nFalling back to book-based response:\n{book_response}"
+            st.warning(f"API Error: {str(e)}")
+            return book_response
 
 
 class InteractiveBook:
@@ -67,13 +80,16 @@ class InteractiveBook:
         self.api_handler = APIHandler()
 
     def find_relevant_context(self, query: str, n_sentences: int = 3) -> str:
-        query_vector = self.vectorizer.transform([query])
-        similarity_scores = cosine_similarity(query_vector, self.tfidf_matrix)
-        top_indices = similarity_scores[0].argsort()[-n_sentences:][::-1]
-        return ' '.join([self.sentences[i] for i in top_indices])
+        try:
+            query_vector = self.vectorizer.transform([query])
+            similarity_scores = cosine_similarity(query_vector, self.tfidf_matrix)
+            top_indices = similarity_scores[0].argsort()[-n_sentences:][::-1]
+            return ' '.join([self.sentences[i] for i in top_indices])
+        except Exception as e:
+            st.error(f"Error finding context: {str(e)}")
+            return ""
 
     def generate_response(self, query: str, context: str) -> Dict[str, str]:
-        # Generate basic response from book
         book_response = f"Based on the book content: {context}"
 
         try:
@@ -94,47 +110,78 @@ class InteractiveBook:
             }
 
 
+def initialize_session_state():
+    """Initialize session state variables"""
+    if 'chat_history' not in st.session_state:
+        st.session_state.chat_history = []
+    if 'current_doc' not in st.session_state:
+        st.session_state.current_doc = None
+    if 'interactive_book' not in st.session_state:
+        st.session_state.interactive_book = None
+
+
+def display_document_stats(content: str):
+    """Display document statistics in the sidebar"""
+    st.sidebar.markdown("---")
+    st.sidebar.subheader("Document Statistics")
+    st.sidebar.write(f"Total characters: {len(content)}")
+    st.sidebar.write(f"Total words: {len(content.split())}")
+    st.sidebar.write(f"Total sentences: {len([s for s in content.split('.') if s.strip()])}")
+
+
+def handle_file_upload(file, file_type):
+    """Process uploaded file and return content"""
+    try:
+        if file_type == "PDF":
+            with st.spinner("Processing PDF file..."):
+                content = DocumentProcessor.extract_text_from_pdf(file)
+        else:
+            content = file.getvalue().decode("utf-8")
+
+        if not content:
+            st.error("Could not extract text from the document.")
+            return None
+
+        return content
+    except Exception as e:
+        st.error(f"Error processing file: {str(e)}")
+        return None
+
+
 def main():
-    st.title("📚Interactive AI Book")
+    st.title("📚 Interactive Book AI")
 
-    # Check for API key
-    if not os.getenv('GOOGLE_API_KEY'):
-        st.error("Google API Key not found in environment variables. Please check your .env file.")
-        return
+    # Initialize session state
+    initialize_session_state()
 
-    # File Upload
+    # Sidebar for document upload
     st.sidebar.title("Document Upload")
     file_type = st.sidebar.selectbox("Select file type:", ["PDF", "TXT"])
     allowed_types = ['pdf'] if file_type == "PDF" else ['txt']
     file = st.sidebar.file_uploader(f"Upload your {file_type} file", type=allowed_types)
 
+    # Clear chat button in sidebar
+    if st.sidebar.button("Clear Chat"):
+        st.session_state.chat_history = []
+        st.experimental_rerun()
+
+    # New document button in sidebar
+    if st.sidebar.button("New Document"):
+        st.session_state.clear()
+        st.experimental_rerun()
+
     if file is not None:
-        try:
-            # Process document
-            if file_type == "PDF":
-                with st.spinner("Processing PDF file..."):
-                    content = DocumentProcessor.extract_text_from_pdf(file)
-            else:
-                content = file.getvalue().decode("utf-8")
+        # Check if it's a new document
+        if st.session_state.current_doc != file.name:
+            content = handle_file_upload(file, file_type)
+            if content:
+                st.session_state.current_doc = file.name
+                st.session_state.interactive_book = InteractiveBook(content)
+                display_document_stats(content)
+                st.success("Document processed successfully!")
 
-            # Initialize Interactive Book
-            if 'interactive_book' not in st.session_state:
-                with st.spinner("Processing content..."):
-                    st.session_state.interactive_book = InteractiveBook(content)
-                    st.sidebar.success("Document processed successfully!")
-
-            # Display document statistics
-            st.sidebar.markdown("---")
-            st.sidebar.subheader("Document Statistics")
-            st.sidebar.write(f"Total characters: {len(content)}")
-            st.sidebar.write(f"Total words: {len(content.split())}")
-
-            # Chat Interface
+        if st.session_state.interactive_book:
             st.write("Chat with your document! Ask questions about the content.")
-
-            # Initialize chat history
-            if 'chat_history' not in st.session_state:
-                st.session_state.chat_history = []
 
             # Display chat history
             for message in st.session_state.chat_history:
@@ -145,7 +192,7 @@ def main():
             user_input = st.chat_input("Ask your question here...")
 
             if user_input:
-                # Add user message to chat
+                # Add user message
                 st.session_state.chat_history.append({
                     "role": "user",
                     "content": user_input,
@@ -161,29 +208,21 @@ def main():
                     responses = st.session_state.interactive_book.generate_response(user_input, context)
 
                 with st.chat_message("assistant"):
-                    if responses["enhanced_response"]:
+                    if responses.get("enhanced_response"):
                         st.write(responses["enhanced_response"])
-                        if st.checkbox("Show book-only response"):
-                            st.write("Book response:", responses["book_response"])
+                        with st.expander("Show book-only response"):
+                            st.write(responses["book_response"])
                     else:
                         st.write(responses["book_response"])
 
-                # Add assistant response to chat history
+                # Add assistant response
                 st.session_state.chat_history.append({
                     "role": "assistant",
-                    "content": responses["enhanced_response"] or responses["book_response"],
+                    "content": responses.get("enhanced_response") or responses["book_response"],
                     "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                 })
-
-        except Exception as e:
-            st.error(f"An error occurred: {str(e)}")
     else:
         st.info("Please upload a PDF or TXT file to start chatting!")
-
-    # Clear chat button
-    if st.sidebar.button("Clear Chat"):
-        st.session_state.chat_history = []
-        st.experimental_rerun()
 
 
 if __name__ == "__main__":
