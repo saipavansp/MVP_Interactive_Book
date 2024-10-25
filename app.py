@@ -347,11 +347,6 @@ def main():
               - Text extraction and processing
               - Detailed document statistics
               - Reading time estimation
-
-            - 💡 **Smart Responses**
-              - Context-aware answers
-              - Book-based information
-              - AI-enhanced insights
             """)
         with col2:
             st.markdown("""
@@ -360,11 +355,6 @@ def main():
               - Multiple speaking styles
               - Topic identification
               - Downloadable scripts
-
-            - 🤝 **User Experience**
-              - Dual-mode interface
-              - Easy document management
-              - Clear presentation
             """)
 
 
